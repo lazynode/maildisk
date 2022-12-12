@@ -16,8 +16,9 @@ func main() {
 	mail := lazy.JsonDecode[maildisk.Type](lazy.Unwrap(os.Open(filepath.Join(conf, `config.json`))))
 	mail.Init()
 	defer mail.Close()
-	lf := lazy.Default(`/tmp/file`)(os.LookupEnv(`LF`))
-	rf := lazy.Default(filepath.Join(lazy.Default(`/`)(os.LookupEnv(`PREFIX`)), lf))(os.LookupEnv(`RF`))
+	lf := lazy.Default(``)(os.LookupEnv(`LF`))
+	rf := lazy.Default(``)(os.LookupEnv(`RF`))
+	lazy.Require(len(lf)*len(rf) > 0, `LF & RF required`)
 	lazy.Require(filepath.IsAbs(rf), `RF should be abs path`)
 	opt := badger.DefaultOptions(filepath.Join(conf, `db`))
 	opt.Logger = nil
@@ -28,7 +29,7 @@ func main() {
 	case `PUT`, `put`:
 		hash := mail.Put(rf, lazy.Unwrap(os.ReadFile(lf)))
 		lazy.Assert(db.Update(func(txn *badger.Txn) error { return txn.Set([]byte(rf), hash) }))
-		log.Println(`PUT`, hex.EncodeToString(hash))
+		log.Println(`PUT`, lf, `->`, rf, hex.EncodeToString(hash))
 	case `GET`, `get`:
 		lazy.Assert(db.View(func(txn *badger.Txn) error {
 			return lazy.Unwrap(txn.Get([]byte(rf))).Value(func(val []byte) error {
