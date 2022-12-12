@@ -2,10 +2,7 @@ package main
 
 import (
 	"encoding/hex"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io/ioutil"
 	"maildisk"
 	"maildisk/lazy"
 	"os"
@@ -13,34 +10,28 @@ import (
 )
 
 func main() {
-	flag.StringVar(&cmd, "cmd", "", "command")
-	flag.StringVar(&conf, "conf", filepath.Join(lazy.Unwrap(os.UserHomeDir()), ".maildisk.json"), "path of config")
-	flag.StringVar(&infile, "infile", "", "path of input file")
-	flag.StringVar(&outfile, "outfile", "", "path of output file")
-	flag.StringVar(&digest, "digest", "", "hex of digest")
-	flag.Parse()
-	var mail maildisk.Type
-	lazy.Assert(json.NewDecoder(lazy.Unwrap(os.Open(conf))).Decode(&mail))
+	mail := lazy.JsonDecode[maildisk.Type](lazy.Unwrap(os.Open(lazy.Default(filepath.Join(lazy.Unwrap(os.UserHomeDir()), `.maildisk`, `config.json`))(os.LookupEnv(`CONF`)))))
 	mail.Init()
 	defer mail.Close()
-	switch cmd {
-	case "put-value":
-		fmt.Println(hex.EncodeToString(mail.PutValue(lazy.Unwrap(ioutil.ReadFile(infile)))))
-	case "get-value":
-		lazy.Assert(ioutil.WriteFile(outfile, mail.GetValue(lazy.Unwrap(hex.DecodeString(digest))), 0644))
-	case "put-object":
-		fmt.Println(hex.EncodeToString(mail.PutObject(lazy.Unwrap(ioutil.ReadFile(infile)))))
-	case "get-object":
-		lazy.Assert(ioutil.WriteFile(outfile, mail.GetObject(lazy.Unwrap(hex.DecodeString(digest))), 0644))
+	file := lazy.Default(``)(os.LookupEnv(`LF`))
+	target := lazy.Default(file)(os.LookupEnv(`RF`))
+
+	switch lazy.Default(`GET`)(os.LookupEnv(`CMD`)) {
+	case `PUT`, `put`:
+		fmt.Println(hex.EncodeToString(mail.Put(target, lazy.Unwrap(os.ReadFile(file)))))
+
+	case `GET`, `get`:
 	default:
-		panic("invalid command")
+		panic(`invalid cmd`)
+		// case "put-value":
+		// 	fmt.Println(hex.EncodeToString(mail.PutValue(lazy.Unwrap(os.ReadFile(lazy.Default("/dev/stdin")(os.LookupEnv(`IF`)))))))
+		// case "get-value":
+		// 	lazy.Assert(os.WriteFile(lazy.Default("/dev/stdout")(os.LookupEnv(`OF`)), mail.GetValue(lazy.Unwrap(hex.DecodeString(lazy.Default("")(os.LookupEnv(`HASH`))))), 0644))
+		// case "put-object":
+		// 	fmt.Println(hex.EncodeToString(mail.PutObject(lazy.Unwrap(os.ReadFile(lazy.Default("/dev/stdin")(os.LookupEnv(`IF`)))))))
+		// case "get-object":
+		// 	lazy.Assert(os.WriteFile(lazy.Default("/dev/stdout")(os.LookupEnv(`OF`)), mail.GetObject(lazy.Unwrap(hex.DecodeString(lazy.Default("")(os.LookupEnv(`HASH`))))), 0644))
+		// default:
+		// 	panic("invalid command")
 	}
 }
-
-var (
-	cmd     string
-	conf    string
-	infile  string
-	outfile string
-	digest  string
-)
