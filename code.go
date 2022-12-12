@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"maildisk/lazy"
 	"strings"
 	"time"
@@ -69,11 +68,9 @@ func (me *Type) get_single(tag []byte, digest []byte) []byte {
 	lazy.Require(len(digest) == 32, `invalid hash`)
 	subject, to := hex.EncodeToString(digest), hex.EncodeToString(tag)
 	sc := imap.NewSearchCriteria()
-	log.Println(subject, to)
 	sc.Header.Add("Subject", subject)
 	sc.Header.Add("To", to)
 	uids := lazy.Unwrap(me.mail.UidSearch(sc))
-	log.Println(uids)
 	for _, uid := range uids {
 		ch := make(chan *imap.Message, 1)
 		ss := new(imap.SeqSet)
