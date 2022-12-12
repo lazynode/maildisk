@@ -14,7 +14,9 @@ import (
 
 func main() {
 	conf := lazy.Default(filepath.Join(lazy.Unwrap(os.UserHomeDir()), `.maildisk`))(os.LookupEnv(`CONF`))
-	mail := lazy.JsonDecode[maildisk.Type](lazy.Unwrap(os.Open(filepath.Join(conf, `config.json`))))
+	file := lazy.Unwrap(os.Open(filepath.Join(conf, `config.json`)))
+	defer file.Close()
+	mail := lazy.JsonDecode[maildisk.Type](file)
 	mail.Init()
 	defer mail.Close()
 	opt := badger.DefaultOptions(filepath.Join(conf, `db`))
