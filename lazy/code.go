@@ -44,13 +44,6 @@ func Require[T interface{}](ok bool, msg T) {
 	}
 }
 
-func With[T interface{}](val T, fs ...func(T)) T {
-	for _, f := range fs {
-		f(val)
-	}
-	return val
-}
-
 func JsonDecode[T interface{}](reader io.Reader) T {
 	var ret T
 	Assert(json.NewDecoder(reader).Decode(&ret))

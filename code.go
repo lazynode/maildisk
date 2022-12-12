@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"maildisk/lazy"
 	"strings"
 	"time"
@@ -35,7 +36,10 @@ func (me *Type) put_single(tag []byte, data []byte) []byte {
 	lazy.Require(len(data) <= hardlimit, `size error`)
 	digest := sha256.Sum256(data)
 	subject, to := hex.EncodeToString(digest[:]), hex.EncodeToString(tag)
-	if len(lazy.Unwrap(me.mail.Search(lazy.With(imap.NewSearchCriteria(), func(sc *imap.SearchCriteria) { sc.Header.Add("Subject", subject) }, func(sc *imap.SearchCriteria) { sc.Header.Add("To", to) })))) == 0 {
+	sc := imap.NewSearchCriteria()
+	sc.Header.Add("Subject", subject)
+	sc.Header.Add("To", to)
+	if len(lazy.Unwrap(me.mail.Search(sc))) == 0 {
 		lazy.Assert(me.mail.Append(mailbox, nil, time.Now(), strings.NewReader(fmt.Sprintf("Subject: %s\r\nTo: %s\r\n\r\n%s", subject, to, base64.StdEncoding.EncodeToString(data)))))
 	}
 	return digest[:]
@@ -51,51 +55,25 @@ func (me *Type) put_multiple(tag []byte, data []byte) []byte {
 	return me.put_single(tag, bytes.Join([][]byte{p, hx, hy}, nil))
 }
 
-func (me *Type) put(path string, data []byte) []byte {
-	return me.put_multiple([]byte(TAGATTR), bytes.Join([][]byte{me.put_multiple([]byte(TAGDATA), data), []byte(path)}, nil))
-}
-
 func (me *Type) Put(path string, data []byte) []byte {
-	return me.put_multiple([]byte(TAGATTR), bytes.Join([][]byte{me.put_multiple([]byte(TAGDATA), data), []byte(path)}, nil))
+	ptr := me.put_multiple([]byte(TAGDATA), data)
+	me.put_multiple([]byte(TAGATTR), bytes.Join([][]byte{ptr, []byte(path)}, nil))
+	return ptr
 }
 
-// func (me *Type) PutObject(data []byte) []byte {
-// 	if len(data) < sizelimit {
-// 		return me.PutValue(data)
-// 	}
-// 	this, that := data[:sizelimit-64], data[sizelimit-64:]
-// 	sep := len(that) / 2
-// 	x, y := that[:sep], that[sep:]
-// 	l, r := me.PutObject(x), me.PutObject(y)
-// 	payload := make([]byte, sizelimit)
-// 	copy(payload[0:32], l)
-// 	copy(payload[32:64], r)
-// 	copy(payload[64:], this)
-// 	return me.PutValue(payload)
-// }
+func (me *Type) Get(digest []byte) []byte {
+	return me.get_multiple([]byte(TAGDATA), digest)
+}
 
-// func (me *Type) PutValue(data []byte) []byte {
-// 	if len(data) > sizelimit {
-// 		panic(data)
-// 	}
-// 	digest := sha256.Sum256(data)
-// 	subject := hex.EncodeToString(digest[:])
-// 	sc := imap.NewSearchCriteria()
-// 	sc.Header.Add("Subject", subject)
-// 	if len(lazy.Unwrap(me.mail.Search(sc))) > 0 {
-// 		return digest[:]
-// 	}
-// 	reader := strings.NewReader(fmt.Sprintf("Subject: %s\r\n\r\n%s", subject, base64.StdEncoding.EncodeToString(data)))
-// 	lazy.Assert(me.mail.Append(mailbox, nil, time.Now(), reader))
-// 	return digest[:]
-// }
-
-func (me *Type) GetValue(digest []byte) []byte {
+func (me *Type) get_single(tag []byte, digest []byte) []byte {
 	lazy.Require(len(digest) == 32, `invalid hash`)
-	subject := hex.EncodeToString(digest)
+	subject, to := hex.EncodeToString(digest), hex.EncodeToString(tag)
 	sc := imap.NewSearchCriteria()
+	log.Println(subject, to)
 	sc.Header.Add("Subject", subject)
+	sc.Header.Add("To", to)
 	uids := lazy.Unwrap(me.mail.UidSearch(sc))
+	log.Println(uids)
 	for _, uid := range uids {
 		ch := make(chan *imap.Message, 1)
 		ss := new(imap.SeqSet)
@@ -114,18 +92,14 @@ func (me *Type) GetValue(digest []byte) []byte {
 	panic(`not found`)
 }
 
-func (me *Type) GetObject(digest []byte) []byte {
-	data := me.GetValue(digest)
+func (me *Type) get_multiple(tag []byte, digest []byte) []byte {
+	data := me.get_single(tag, digest)
 	if len(data) < sizelimit {
 		return data
 	}
 	l, r, this := data[0:32], data[32:64], data[64:]
-	x, y := me.GetObject(l), me.GetObject(r)
-	payload := make([]byte, len(x)+len(y)+len(data)-64)
-	copy(payload[0:len(this)], this)
-	copy(payload[len(this):len(this)+len(x)], x)
-	copy(payload[len(this)+len(x):], y)
-	return payload
+	x, y := me.get_multiple(tag, l), me.get_multiple(tag, r)
+	return bytes.Join([][]byte{this, x, y}, nil)
 }
 
 func (me *Type) Close() {
