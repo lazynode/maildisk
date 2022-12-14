@@ -21,9 +21,10 @@ fn Put<'a>(
     data: &'a Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let pool = createpool(config)?;
-    let mut hash = puts(&pool, config, &TAGDATA, data).clone();
-    hash.extend(path);
-    let _ = puts(&pool, config, &TAGATTR, &hash);
+    let hash = puts(&pool, config, &TAGDATA, data).clone();
+	let mut hashpath = hash.clone();
+    hashpath.extend(path);
+    let _ = puts(&pool, config, &TAGATTR, &hashpath);
 
     Ok(hash)
 }
@@ -122,16 +123,16 @@ fn gets<'a>(
         return data;
     }
     let (l, r, this) = (
-		&data[..32].to_owned(), 
-		&data[32..64].to_owned(), 
-		data[64..].to_owned(),
-	);
+        &data[..32].to_owned(),
+        &data[32..64].to_owned(),
+        data[64..].to_owned(),
+    );
 
     let mut data =
-        lazy::parallel_return(|| puts(pool, config, tag, l), || puts(pool, config, tag, r));
+        lazy::parallel_return(|| gets(pool, config, tag, l), || gets(pool, config, tag, r));
     data.insert(0, this);
 
-	data.into_iter().flatten().collect::<Vec<_>>().to_owned()
+    data.into_iter().flatten().collect::<Vec<_>>().to_owned()
 }
 fn put<'a>(
     pool: &(
@@ -176,33 +177,31 @@ fn get<'a>(
     tag: &'static [u8],
     hash: &'a Vec<u8>,
 ) -> Vec<u8> {
-	assert!(hash.len() ==32, "invalid hash");
+    assert!(hash.len() == 32, "invalid hash");
     let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
 
     let subject = hex::encode(hash);
     let to = hex::encode(tag);
-	
+
     let resp = mail
         .uid_search(format!("Subject {} To {}", subject, to))
         .unwrap();
 
-	for uid in resp {
-		let mails = mail.uid_fetch(uid.to_string(), "RFC822.TEXT").unwrap();
-		for msg in mails.iter() {
-			for text in msg.text()  {
-				let data = base64::decode(text).unwrap();
-				let mut dig = Sha256::new();
-				dig.update(&data);
-				let dig = dig.finalize();
-				if dig.to_vec() == *hash {
-					return data
-				}
-			}
-		}
-	}
-    
+    for uid in resp {
+        let mails = mail.uid_fetch(uid.to_string(), "RFC822.TEXT").unwrap();
+        for msg in mails.iter() {
+            let data = base64::decode(msg.text().unwrap()).unwrap();
+            let mut dig = Sha256::new();
+            dig.update(&data);
+            let dig = dig.finalize();
+            if dig.to_vec() == *hash {
+                return data;
+            }
+        }
+    }
+
     pool.0.clone().send(Some(mail)).unwrap();
-	panic!("not found");
+    panic!("not found");
 }
 
 const MAILBOX: &str = "MDDATA";
@@ -230,23 +229,35 @@ mod tests {
 
     #[test]
     fn put_testdata() {
-        // todo: delete the "MDDATA" folder before testing
         let hash = Put(
             &C,
             &"/test".as_bytes().to_vec(),
             &"test".as_bytes().to_vec(),
         )
         .unwrap();
-
-		let data = Get(&C, &hash).unwrap();
-		assert_eq!(data, "test".as_bytes().to_vec())
     }
 
     #[test]
     fn get_testdata() {
-		let hash = hex::decode("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08").unwrap();
-		let data = Get(&C, &hash).unwrap();
-		assert_eq!(data, "test".as_bytes().to_vec())
+        let hash = hex::decode("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
+            .unwrap();
+        let data = Get(&C, &hash).unwrap();
+        assert_eq!(data, "test".as_bytes().to_vec())
     }
 
+    #[test]
+    fn putget_largedata_testdata() {
+		let large_data = "test".repeat(HARDLIMIT/3);
+        let hash = Put(
+            &C,
+            &"/test".as_bytes().to_vec(),
+            &large_data.as_bytes().to_vec(),
+        )
+        .unwrap();
+
+		println!("{:#?}", hex::encode(&hash));
+
+        let data = Get(&C, &hash).unwrap();
+        assert_eq!(data, large_data.as_bytes().to_vec());
+    }
 }
