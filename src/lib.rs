@@ -1,38 +1,35 @@
-mod types {
-    pub mod conf;
-}
 mod lazy;
+mod types;
 
 use base64;
 use imap::Session;
 use native_tls::TlsStream;
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha256};
 use std::error::Error;
-use std::io::Read;
 use std::net::TcpStream;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use types::conf;
 
 extern crate imap;
 
-fn Put<'a>(
+pub fn put<'a>(
     config: &conf::Type,
     path: &'a Vec<u8>,
     data: &'a Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let pool = createpool(config)?;
-    let hash = puts(&pool, config, &TAGDATA, data).clone();
+    let hash = _puts(&pool, config, &TAGDATA, data).clone();
 	let mut hashpath = hash.clone();
     hashpath.extend(path);
-    let _ = puts(&pool, config, &TAGATTR, &hashpath);
+    let _ = _puts(&pool, config, &TAGATTR, &hashpath);
 
     Ok(hash)
 }
-fn Get<'a>(config: &conf::Type, hash: &'a Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn get<'a>(config: &conf::Type, hash: &'a Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     let pool = createpool(config)?;
-    Ok(gets(&pool, config, &TAGDATA, hash))
+    Ok(_gets(&pool, config, &TAGDATA, hash))
 }
-fn Init(config: &conf::Type) -> Result<(), Box<dyn Error>> {
+pub fn init(config: &conf::Type) -> Result<(), Box<dyn Error>> {
     let domain_port: Vec<_> = config.address.split(':').collect();
     let client = imap::ClientBuilder::new(domain_port[0], domain_port[1].parse()?).native_tls()?;
     let mut session = match client.login(config.username, config.password) {
@@ -77,7 +74,7 @@ fn pickmail(
         }
     }
 }
-fn puts<'a>(
+fn _puts<'a>(
     pool: &(
         SyncSender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
@@ -87,7 +84,7 @@ fn puts<'a>(
     data: &'a Vec<u8>,
 ) -> Vec<u8> {
     if data.len() < HARDLIMIT {
-        return put(pool, config, tag, data);
+        return _put(pool, config, tag, data);
     }
 
     let (sx, sy) = (SOFTLIMIT, (data.len() / SOFTLIMIT + 1) / 2 * SOFTLIMIT);
@@ -98,10 +95,10 @@ fn puts<'a>(
     );
 
     let mut data =
-        lazy::parallel_return(|| puts(pool, config, tag, l), || puts(pool, config, tag, r));
+        lazy::parallel_return(|| _puts(pool, config, tag, l), || _puts(pool, config, tag, r));
     data.push(this);
 
-    put(
+    _put(
         pool,
         config,
         tag,
@@ -109,7 +106,7 @@ fn puts<'a>(
     )
 }
 
-fn gets<'a>(
+fn _gets<'a>(
     pool: &(
         SyncSender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
@@ -118,7 +115,7 @@ fn gets<'a>(
     tag: &'static [u8],
     hash: &'a Vec<u8>,
 ) -> Vec<u8> {
-    let data = get(pool, config, tag, hash);
+    let data = _get(pool, config, tag, hash);
     if data.len() < HARDLIMIT {
         return data;
     }
@@ -129,12 +126,12 @@ fn gets<'a>(
     );
 
     let mut data =
-        lazy::parallel_return(|| gets(pool, config, tag, l), || gets(pool, config, tag, r));
+        lazy::parallel_return(|| _gets(pool, config, tag, l), || _gets(pool, config, tag, r));
     data.insert(0, this);
 
     data.into_iter().flatten().collect::<Vec<_>>().to_owned()
 }
-fn put<'a>(
+fn _put<'a>(
     pool: &(
         SyncSender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
@@ -168,7 +165,7 @@ fn put<'a>(
     pool.0.clone().send(Some(mail)).unwrap();
     hash.to_vec()
 }
-fn get<'a>(
+fn _get<'a>(
     pool: &(
         SyncSender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
@@ -222,14 +219,14 @@ mod tests {
     };
 
     #[test]
-    fn init() {
+    fn init_test() {
         // todo: delete the "MDDATA" folder before testing
-        Init(&C).unwrap();
+        init(&C).unwrap();
     }
 
     #[test]
     fn put_testdata() {
-        let hash = Put(
+        let _ = put(
             &C,
             &"/test".as_bytes().to_vec(),
             &"test".as_bytes().to_vec(),
@@ -241,14 +238,14 @@ mod tests {
     fn get_testdata() {
         let hash = hex::decode("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
             .unwrap();
-        let data = Get(&C, &hash).unwrap();
+        let data = get(&C, &hash).unwrap();
         assert_eq!(data, "test".as_bytes().to_vec())
     }
 
     #[test]
     fn putget_largedata_testdata() {
 		let large_data = "test".repeat(HARDLIMIT/3);
-        let hash = Put(
+        let hash = put(
             &C,
             &"/test".as_bytes().to_vec(),
             &large_data.as_bytes().to_vec(),
@@ -257,7 +254,7 @@ mod tests {
 
 		println!("{:#?}", hex::encode(&hash));
 
-        let data = Get(&C, &hash).unwrap();
+        let data = get(&C, &hash).unwrap();
         assert_eq!(data, large_data.as_bytes().to_vec());
     }
 }
