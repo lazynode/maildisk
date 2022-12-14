@@ -58,7 +58,7 @@ func gets(pool chan *client.Client, config *conf.Type, tag []byte, hash []byte) 
 		return data
 	}
 	l, r, this := data[0:32], data[32:64], data[64:]
-	return bytes.Join(append([][]byte{this}, lazy.ParallelReturn(func(ret func([]byte)) { ret(gets(pool, config, tag, l)) }, func(ret func([]byte)) { ret(gets(pool, config, tag, r)) })...), nil)
+	return bytes.Join(append([][]byte{this}, lazy.ParallelReturn(func() []byte { return gets(pool, config, tag, l) }, func() []byte { return gets(pool, config, tag, r) })...), nil)
 }
 
 func get(pool chan *client.Client, config *conf.Type, tag []byte, hash []byte) []byte {
@@ -109,7 +109,7 @@ func puts(pool chan *client.Client, config *conf.Type, tag []byte, data []byte) 
 	}
 	sx, sy := SOFTLIMIT, (len(data)/SOFTLIMIT+1)/2*SOFTLIMIT
 	this, l, r := data[:sx], data[sx:sy], data[sy:]
-	return put(pool, config, tag, bytes.Join(append(lazy.ParallelReturn(func(ret func([]byte)) { ret(puts(pool, config, tag, l)) }, func(ret func([]byte)) { ret(puts(pool, config, tag, r)) }), this), nil))
+	return put(pool, config, tag, bytes.Join(append(lazy.ParallelReturn(func() []byte { return puts(pool, config, tag, l) }, func() []byte { return puts(pool, config, tag, r) }), this), nil))
 }
 
 const (

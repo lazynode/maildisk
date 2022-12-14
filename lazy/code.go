@@ -63,15 +63,15 @@ func Flatten[T interface{}](val ...[]T) []T {
 	return ret
 }
 
-func ParallelReturn[T interface{}](fs ...func(func(T))) []T {
+func ParallelReturn[T interface{}](fs ...func() T) []T {
 	ret := make([]T, len(fs))
 	var wg sync.WaitGroup
 	wg.Add(len(fs))
-	for i, f := range fs {
-		go func(i int, f func(func(T))) {
+	for i := range fs {
+		go func(i int) {
 			defer wg.Done()
-			f(func(t T) { ret[i] = t })
-		}(i, f)
+			ret[i] = fs[i]()
+		}(i)
 	}
 	wg.Wait()
 	return ret
