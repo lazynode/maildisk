@@ -3,15 +3,15 @@ mod types {
 }
 mod lazy;
 
+use base64;
 use imap::Session;
 use native_tls::TlsStream;
+use sha2::{Digest, Sha256, Sha512};
 use std::error::Error;
 use std::io::Read;
 use std::net::TcpStream;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use types::conf;
-use sha2::{Sha256, Sha512, Digest};
-use base64;
 
 extern crate imap;
 
@@ -96,13 +96,16 @@ fn puts<'a>(
         &data[sy..].to_owned(),
     );
 
-    let mut data = lazy::parallel_return(
-		|| puts(pool, config, tag, l), 
-		|| puts(pool, config, tag, r));
-	data.push(this);
+    let mut data =
+        lazy::parallel_return(|| puts(pool, config, tag, l), || puts(pool, config, tag, r));
+    data.push(this);
 
-
-    put(pool, config, tag, &data.into_iter().flatten().collect::<Vec<_>>().to_owned())
+    put(
+        pool,
+        config,
+        tag,
+        &data.into_iter().flatten().collect::<Vec<_>>().to_owned(),
+    )
 }
 
 fn gets<'a>(
@@ -114,7 +117,21 @@ fn gets<'a>(
     tag: &'static [u8],
     hash: &'a Vec<u8>,
 ) -> Vec<u8> {
-    vec![]
+    let data = get(pool, config, tag, hash);
+    if data.len() < HARDLIMIT {
+        return data;
+    }
+    let (l, r, this) = (
+		&data[..32].to_owned(), 
+		&data[32..64].to_owned(), 
+		data[64..].to_owned(),
+	);
+
+    let mut data =
+        lazy::parallel_return(|| puts(pool, config, tag, l), || puts(pool, config, tag, r));
+    data.insert(0, this);
+
+	data.into_iter().flatten().collect::<Vec<_>>().to_owned()
 }
 fn put<'a>(
     pool: &(
@@ -125,24 +142,67 @@ fn put<'a>(
     tag: &'static [u8],
     data: &'a Vec<u8>,
 ) -> Vec<u8> {
-	assert!(data.len() <= HARDLIMIT, "size error");
-	let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
-	let mut hash = Sha256::new();
-	hash.update(data);
-	let hash = hash.finalize();
+    assert!(data.len() <= HARDLIMIT, "size error");
+    let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
+    let mut hash = Sha256::new();
+    hash.update(data);
+    let hash = hash.finalize();
 
-	let subject = hex::encode(hash);
-	let to = hex::encode(tag);
-	// let sc = imap::
+    let subject = hex::encode(hash);
+    let to = hex::encode(tag);
 
-	let resp = mail.search(format!("Subject {} To {}", subject, to)).unwrap();
-	if resp.len() == 0 {
-		let content = format!("Subject: {}\r\nTo: {}\r\n\r\n{}", subject, to, base64::encode(data.iter()).to_owned());
-		let _ = mail.append(MAILBOX, content.as_bytes()).finish().unwrap();
-	}
+    let resp = mail
+        .search(format!("Subject {} To {}", subject, to))
+        .unwrap();
+    if resp.len() == 0 {
+        let content = format!(
+            "Subject: {}\r\nTo: {}\r\n\r\n{}",
+            subject,
+            to,
+            base64::encode(data.iter()).to_owned()
+        );
+        let _ = mail.append(MAILBOX, content.as_bytes()).finish().unwrap();
+    }
 
-	pool.0.clone().send(Some(mail)).unwrap();
+    pool.0.clone().send(Some(mail)).unwrap();
     hash.to_vec()
+}
+fn get<'a>(
+    pool: &(
+        SyncSender<Option<Session<TlsStream<TcpStream>>>>,
+        Receiver<Option<Session<TlsStream<TcpStream>>>>,
+    ),
+    config: &conf::Type,
+    tag: &'static [u8],
+    hash: &'a Vec<u8>,
+) -> Vec<u8> {
+	assert!(hash.len() ==32, "invalid hash");
+    let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
+
+    let subject = hex::encode(hash);
+    let to = hex::encode(tag);
+	
+    let resp = mail
+        .uid_search(format!("Subject {} To {}", subject, to))
+        .unwrap();
+
+	for uid in resp {
+		let mails = mail.uid_fetch(uid.to_string(), "RFC822.TEXT").unwrap();
+		for msg in mails.iter() {
+			for text in msg.text()  {
+				let data = base64::decode(text).unwrap();
+				let mut dig = Sha256::new();
+				dig.update(&data);
+				let dig = dig.finalize();
+				if dig.to_vec() == *hash {
+					return data
+				}
+			}
+		}
+	}
+    
+    pool.0.clone().send(Some(mail)).unwrap();
+	panic!("not found");
 }
 
 const MAILBOX: &str = "MDDATA";
@@ -155,23 +215,38 @@ const TAGDATA: &[u8] = "DATA".as_bytes();
 mod tests {
     use super::*;
 
-	const C : conf::Type = conf::Type {
-		address: "mail.7.day:993",
-		username: "ms01@7.day",
-		password: "Ms01M$01",
-		max_conn: 4,
-	};
+    const C: conf::Type = conf::Type {
+        address: "mail.7.day:993",
+        username: "ms01@7.day",
+        password: "Ms01M$01",
+        max_conn: 4,
+    };
 
     #[test]
     fn init() {
         // todo: delete the "MDDATA" folder before testing
-        Init(&C)
-        .unwrap();
+        Init(&C).unwrap();
     }
 
     #[test]
     fn put_testdata() {
         // todo: delete the "MDDATA" folder before testing
-        Put(&C, &"/test".as_bytes().to_vec(),& "test".as_bytes().to_vec()).unwrap();
+        let hash = Put(
+            &C,
+            &"/test".as_bytes().to_vec(),
+            &"test".as_bytes().to_vec(),
+        )
+        .unwrap();
+
+		let data = Get(&C, &hash).unwrap();
+		assert_eq!(data, "test".as_bytes().to_vec())
     }
+
+    #[test]
+    fn get_testdata() {
+		let hash = hex::decode("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08").unwrap();
+		let data = Get(&C, &hash).unwrap();
+		assert_eq!(data, "test".as_bytes().to_vec())
+    }
+
 }
