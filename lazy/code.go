@@ -3,6 +3,7 @@ package lazy
 import (
 	"encoding/json"
 	"io"
+	"sync"
 )
 
 func Assert(err error) {
@@ -44,8 +45,34 @@ func Require[T interface{}](ok bool, msg T) {
 	}
 }
 
-func JsonDecode[T interface{}](reader io.Reader) T {
+func JsonDecodePtr[T interface{}](reader io.Reader) *T {
 	var ret T
 	Assert(json.NewDecoder(reader).Decode(&ret))
+	return &ret
+}
+
+func Array[T interface{}](val ...T) []T {
+	return val
+}
+
+func Flatten[T interface{}](val ...[]T) []T {
+	ret := make([]T, 0)
+	for _, v := range val {
+		ret = append(ret, v...)
+	}
+	return ret
+}
+
+func ParallelReturn[T interface{}](fs ...func(func(T))) []T {
+	ret := make([]T, len(fs))
+	var wg sync.WaitGroup
+	wg.Add(len(fs))
+	for i, f := range fs {
+		go func(i int, f func(func(T))) {
+			defer wg.Done()
+			f(func(t T) { ret[i] = t })
+		}(i, f)
+	}
+	wg.Wait()
 	return ret
 }

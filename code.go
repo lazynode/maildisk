@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maildisk/lazy"
+	"maildisk/type/conf"
 	"strings"
 	"time"
 
@@ -15,72 +16,69 @@ import (
 	"github.com/emersion/go-imap/client"
 )
 
-const sizelimit = 64 * 1024
-
-type Type struct {
-	Address  string
-	Username string
-	Password string
-	mail     *client.Client
+func Put(config *conf.Type, path string, data []byte) []byte {
+	pool := createpool(config)
+	hash := puts(pool, config, []byte(TAGDATA), data)
+	puts(pool, config, []byte(TAGDATA), bytes.Join([][]byte{hash, []byte(path)}, nil))
+	return hash
 }
 
-func (me *Type) Init() {
-	me.mail = lazy.Unwrap(client.DialTLS(me.Address, nil))
-	lazy.Assert(me.mail.Login(me.Username, me.Password))
-	defer lazy.Catch(func(error) { lazy.Assert(me.mail.Create(mailbox)); lazy.Unwrap(me.mail.Select(mailbox, false)) })
-	lazy.Unwrap(me.mail.Select(mailbox, false))
+func Get(config *conf.Type, hash []byte) []byte {
+	return gets(createpool(config), config, []byte(TAGDATA), hash)
 }
 
-func (me *Type) put_single(tag []byte, data []byte) []byte {
-	lazy.Require(len(data) <= hardlimit, `size error`)
-	digest := sha256.Sum256(data)
-	subject, to := hex.EncodeToString(digest[:]), hex.EncodeToString(tag)
+func Init(config *conf.Type) {
+	mail := lazy.Unwrap(client.DialTLS(config.Address, nil))
+	lazy.Assert(mail.Login(config.Username, config.Password))
+	lazy.Assert(mail.Create(MAILBOX))
+}
+
+func createpool(config *conf.Type) chan *client.Client {
+	pool := make(chan *client.Client, config.MaxConn)
+	for i := 0; i < config.MaxConn; i++ {
+		pool <- nil
+	}
+	return pool
+}
+
+func pickmail(pool chan *client.Client, config *conf.Type) *client.Client {
+	mail := <-pool
+	if mail == nil {
+		mail = lazy.Unwrap(client.DialTLS(config.Address, nil))
+		lazy.Assert(mail.Login(config.Username, config.Password))
+		lazy.Unwrap(mail.Select(MAILBOX, false))
+	}
+	return mail
+}
+
+func gets(pool chan *client.Client, config *conf.Type, tag []byte, hash []byte) []byte {
+	data := get(pool, config, tag, hash)
+	if len(data) < HARDLIMIT {
+		return data
+	}
+	l, r, this := data[0:32], data[32:64], data[64:]
+	return bytes.Join(append([][]byte{this}, lazy.ParallelReturn(func(ret func([]byte)) { ret(gets(pool, config, tag, l)) }, func(ret func([]byte)) { ret(gets(pool, config, tag, r)) })...), nil)
+}
+
+func get(pool chan *client.Client, config *conf.Type, tag []byte, hash []byte) []byte {
+	lazy.Require(len(hash) == 32, `invalid hash`)
+	mail := pickmail(pool, config)
+	defer func() { pool <- mail }()
+	subject, to := hex.EncodeToString(hash), hex.EncodeToString(tag)
 	sc := imap.NewSearchCriteria()
 	sc.Header.Add("Subject", subject)
 	sc.Header.Add("To", to)
-	if len(lazy.Unwrap(me.mail.Search(sc))) == 0 {
-		lazy.Assert(me.mail.Append(mailbox, nil, time.Now(), strings.NewReader(fmt.Sprintf("Subject: %s\r\nTo: %s\r\n\r\n%s", subject, to, base64.StdEncoding.EncodeToString(data)))))
-	}
-	return digest[:]
-}
-
-func (me *Type) put_multiple(tag []byte, data []byte) []byte {
-	if len(data) < hardlimit {
-		return me.put_single(tag, data)
-	}
-	sx, sy := softlimit, (len(data)/softlimit+1)/2*softlimit
-	p, px, py := data[:sx], data[sx:sy], data[sy:]
-	hx, hy := me.put_single(tag, px), me.put_single(tag, py)
-	return me.put_single(tag, bytes.Join([][]byte{p, hx, hy}, nil))
-}
-
-func (me *Type) Put(path string, data []byte) []byte {
-	ptr := me.put_multiple([]byte(TAGDATA), data)
-	me.put_multiple([]byte(TAGATTR), bytes.Join([][]byte{ptr, []byte(path)}, nil))
-	return ptr
-}
-
-func (me *Type) Get(digest []byte) []byte {
-	return me.get_multiple([]byte(TAGDATA), digest)
-}
-
-func (me *Type) get_single(tag []byte, digest []byte) []byte {
-	lazy.Require(len(digest) == 32, `invalid hash`)
-	subject, to := hex.EncodeToString(digest), hex.EncodeToString(tag)
-	sc := imap.NewSearchCriteria()
-	sc.Header.Add("Subject", subject)
-	sc.Header.Add("To", to)
-	uids := lazy.Unwrap(me.mail.UidSearch(sc))
+	uids := lazy.Unwrap(mail.UidSearch(sc))
 	for _, uid := range uids {
 		ch := make(chan *imap.Message, 1)
 		ss := new(imap.SeqSet)
 		ss.AddNum(uid)
-		lazy.Assert(me.mail.UidFetch(ss, []imap.FetchItem{imap.FetchRFC822Text}, ch))
+		lazy.Assert(mail.UidFetch(ss, []imap.FetchItem{imap.FetchRFC822Text}, ch))
 		for msg := range ch {
 			for _, text := range msg.Body {
 				data := lazy.Unwrap(io.ReadAll(base64.NewDecoder(base64.StdEncoding, text)))
 				dig := sha256.Sum256(data)
-				if bytes.Equal(dig[:], digest) {
+				if bytes.Equal(dig[:], hash) {
 					return data
 				}
 			}
@@ -89,24 +87,34 @@ func (me *Type) get_single(tag []byte, digest []byte) []byte {
 	panic(`not found`)
 }
 
-func (me *Type) get_multiple(tag []byte, digest []byte) []byte {
-	data := me.get_single(tag, digest)
-	if len(data) < sizelimit {
-		return data
+func put(pool chan *client.Client, config *conf.Type, tag []byte, data []byte) []byte {
+	lazy.Require(len(data) <= HARDLIMIT, `size error`)
+	mail := pickmail(pool, config)
+	defer func() { pool <- mail }()
+	hash := sha256.Sum256(data)
+	subject, to := hex.EncodeToString(hash[:]), hex.EncodeToString(tag)
+	sc := imap.NewSearchCriteria()
+	sc.Header.Add("Subject", subject)
+	sc.Header.Add("To", to)
+	if len(lazy.Unwrap(mail.Search(sc))) == 0 {
+		lazy.Assert(mail.Append(MAILBOX, nil, time.Now(), strings.NewReader(fmt.Sprintf("Subject: %s\r\nTo: %s\r\n\r\n%s", subject, to, base64.StdEncoding.EncodeToString(data)))))
 	}
-	l, r, this := data[0:32], data[32:64], data[64:]
-	x, y := me.get_multiple(tag, l), me.get_multiple(tag, r)
-	return bytes.Join([][]byte{this, x, y}, nil)
+	return hash[:]
 }
 
-func (me *Type) Close() {
-	me.mail.Logout()
+func puts(pool chan *client.Client, config *conf.Type, tag []byte, data []byte) []byte {
+	if len(data) < HARDLIMIT {
+		return put(pool, config, tag, data)
+	}
+	sx, sy := SOFTLIMIT, (len(data)/SOFTLIMIT+1)/2*SOFTLIMIT
+	this, l, r := data[:sx], data[sx:sy], data[sy:]
+	return put(pool, config, tag, bytes.Join(append([][]byte{this}, lazy.ParallelReturn(func(ret func([]byte)) { ret(puts(pool, config, tag, l)) }, func(ret func([]byte)) { ret(puts(pool, config, tag, r)) })...), nil))
 }
 
 const (
-	mailbox   = `MDDATA`
-	hardlimit = 64 * 1024
-	softlimit = hardlimit - 64
+	MAILBOX   = `MDDATA`
+	HARDLIMIT = 64 * 1024
+	SOFTLIMIT = HARDLIMIT - 64
 
 	TAGATTR = `ATTR`
 	TAGDATA = `DATA`
