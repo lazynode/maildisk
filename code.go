@@ -9,6 +9,11 @@ import (
 	"io"
 	"maildisk/lazy"
 	"maildisk/type/conf"
+	"maildisk/type/exception/content_not_found"
+	"maildisk/type/exception/init_failed"
+	"maildisk/type/exception/login_failed"
+	"maildisk/type/exception/mail_box_already_exists"
+	"maildisk/type/exception/maxconn_is_zero"
 	"regexp"
 	"strings"
 	"time"
@@ -29,12 +34,16 @@ func Get(config *conf.Type, hash []byte) []byte {
 }
 
 func Init(config *conf.Type) {
+	defer lazy.Catch(init_failed.CatchError)
 	mail := lazy.Unwrap(client.DialTLS(config.Address, nil))
+	defer lazy.Catch(login_failed.CatchError)
 	lazy.Assert(mail.Login(config.Username, config.Password))
+	defer lazy.Catch(mail_box_already_exists.CatchError)
 	lazy.Assert(mail.Create(MAILBOX))
 }
 
 func createpool(config *conf.Type) chan *client.Client {
+	lazy.Require(config.MaxConn > 0, &maxconn_is_zero.Type{})
 	pool := make(chan *client.Client, config.MaxConn)
 	for i := 0; i < config.MaxConn; i++ {
 		pool <- nil
@@ -85,7 +94,7 @@ func get(pool chan *client.Client, config *conf.Type, tag []byte, hash []byte) [
 			}
 		}
 	}
-	panic(`not found`)
+	panic(&content_not_found.Type{Hash: hash})
 }
 
 func put(pool chan *client.Client, config *conf.Type, tag []byte, data []byte) []byte {

@@ -7,6 +7,11 @@ import (
 	"maildisk"
 	"maildisk/lazy"
 	"maildisk/type/conf"
+	"maildisk/type/exception/content_not_found"
+	"maildisk/type/exception/init_failed"
+	"maildisk/type/exception/login_failed"
+	"maildisk/type/exception/mail_box_already_exists"
+	"maildisk/type/exception/maxconn_is_zero"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,13 +21,16 @@ import (
 )
 
 func main() {
+	defer lazy.Catch(func(err *mail_box_already_exists.Type) { log.Println(`MAILBOX ALREADY EXISTS; YOU DON'T NEED TO INIT`) })
+	defer lazy.Catch(func(err *login_failed.Type) { log.Println(`LOGIN FAILED; CHECK YOUR CONFIG FILE`) })
+	defer lazy.Catch(func(err *init_failed.Type) { log.Println(`INIT FAILED`) })
+	defer lazy.Catch(func(err *maxconn_is_zero.Type) { log.Println(`MAXCONN IS 0; CHECK YOUR CONFIG FILE`) })
+	defer lazy.Catch(func(err *content_not_found.Type) { log.Println(`CONTENT NOT FOUND:`, err.Hash) })
+
 	dir := lazy.Default(filepath.Join(lazy.Unwrap(os.UserHomeDir()), `.maildisk`))(os.LookupEnv(`CONF`))
 	file := lazy.Unwrap(os.Open(filepath.Join(dir, `config.json`)))
 	defer file.Close()
 	conf := lazy.JsonDecodePtr[conf.Type](file)
-	// mail := lazy.JsonDecode[maildisk.Type](file)
-	// mail.Init()
-	// defer mail.Close()
 	opt := badger.DefaultOptions(filepath.Join(dir, `db`))
 	opt.Logger = nil
 	db := lazy.Unwrap(badger.Open(opt))
