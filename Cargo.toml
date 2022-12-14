@@ -1,0 +1,20 @@
+[package]
+name = "maildisk"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+native-tls = { version = "0.2.2" }
+time = {version = "0.1.1" }
+sha2 = {version = "0.10.6"}
+hex = {version = "0.4.3"}
+base64 = {version = "0.20.0"}
+
+[dependencies.imap]
+git = "https://github.com/jonhoo/rust-imap"
+rev = "v3.0.0-alpha.9"
+default-features = true
+
