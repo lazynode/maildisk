@@ -9,6 +9,7 @@ import (
 	"io"
 	"maildisk/lazy"
 	"maildisk/type/conf"
+	"regexp"
 	"strings"
 	"time"
 
@@ -97,7 +98,7 @@ func put(pool chan *client.Client, config *conf.Type, tag []byte, data []byte) [
 	sc.Header.Add("Subject", subject)
 	sc.Header.Add("To", to)
 	if len(lazy.Unwrap(mail.Search(sc))) == 0 {
-		lazy.Assert(mail.Append(MAILBOX, nil, time.Now(), strings.NewReader(fmt.Sprintf("Subject: %s\r\nTo: %s\r\n\r\n%s", subject, to, base64.StdEncoding.EncodeToString(data)))))
+		lazy.Assert(mail.Append(MAILBOX, nil, time.Now(), strings.NewReader(fmt.Sprintf("Subject: %s\r\nTo: %s\r\n\r\n%s", subject, to, regexp.MustCompile(`(.{1,78})`).ReplaceAllString(base64.StdEncoding.EncodeToString(data), "$1\r\n")))))
 	}
 	return hash[:]
 }
