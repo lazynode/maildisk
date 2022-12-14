@@ -170,6 +170,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "home"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "747309b4b440c06d57b0b25f2aee03ee9b5e5397d288c60e21fc709bb98a7408"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "imap"
 version = "3.0.0-alpha.9"
 source = "git+https://github.com/jonhoo/rust-imap?rev=v3.0.0-alpha.9#445432f9ed5446b7ab8535ebc5689567c46266a0"
@@ -204,6 +213,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "json"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5614f4b40d0dbcf479e45ec8c2e755fef0c9afd994b2b872ce9f203bf733a7b7"
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -230,7 +245,9 @@ version = "0.1.0"
 dependencies = [
  "base64 0.20.0",
  "hex",
+ "home",
  "imap",
+ "json",
  "native-tls",
  "sha2",
  "time",
