@@ -20,7 +20,7 @@ import (
 func Put(config *conf.Type, path string, data []byte) []byte {
 	pool := createpool(config)
 	hash := puts(pool, config, []byte(TAGDATA), data)
-	puts(pool, config, []byte(TAGDATA), bytes.Join([][]byte{hash, []byte(path)}, nil))
+	puts(pool, config, []byte(TAGATTR), bytes.Join([][]byte{hash, []byte(path)}, nil))
 	return hash
 }
 
