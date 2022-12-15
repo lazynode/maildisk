@@ -192,6 +192,7 @@ fn _get<'a>(
             dig.update(&data);
             let dig = dig.finalize();
             if dig.to_vec() == *hash {
+                pool.0.clone().send(Some(mail)).unwrap();
                 return data;
             }
         }
@@ -244,7 +245,7 @@ mod tests {
 
     #[test]
     fn putget_largedata_testdata() {
-		let large_data = "test".repeat(HARDLIMIT/2);
+		let large_data = "test".repeat(HARDLIMIT*10);
         let hash = put(
             &C,
             &"/test".as_bytes().to_vec(),
