@@ -12,10 +12,10 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 
 extern crate imap;
 
-pub fn put<'a>(
+pub fn put(
     config: &conf::Type,
-    path: &'a Vec<u8>,
-    data: &'a Vec<u8>,
+    path: &Vec<u8>,
+    data: &Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let pool = createpool(config)?;
     let hash = _puts(&pool, config, &TAGDATA, data).clone();
@@ -25,7 +25,7 @@ pub fn put<'a>(
 
     Ok(hash)
 }
-pub fn get<'a>(config: &conf::Type, hash: &'a Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn get(config: &conf::Type, hash: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     let pool = createpool(config)?;
     Ok(_gets(&pool, config, &TAGDATA, hash))
 }
@@ -74,14 +74,14 @@ fn pickmail(
         }
     }
 }
-fn _puts<'a>(
+fn _puts(
     pool: &(
         Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
     tag: &'static [u8],
-    data: &'a Vec<u8>,
+    data: &Vec<u8>,
 ) -> Vec<u8> {
     if data.len() < HARDLIMIT {
         return _put(pool, config, tag, data);
@@ -106,14 +106,14 @@ fn _puts<'a>(
     )
 }
 
-fn _gets<'a>(
+fn _gets(
     pool: &(
         Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
     tag: &'static [u8],
-    hash: &'a Vec<u8>,
+    hash: &Vec<u8>,
 ) -> Vec<u8> {
     let data = _get(pool, config, tag, hash);
     if data.len() < HARDLIMIT {
@@ -131,14 +131,14 @@ fn _gets<'a>(
 
     data.into_iter().flatten().collect::<Vec<_>>().to_owned()
 }
-fn _put<'a>(
+fn _put(
     pool: &(
         Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
     tag: &'static [u8],
-    data: &'a Vec<u8>,
+    data: &Vec<u8>,
 ) -> Vec<u8> {
     assert!(data.len() <= HARDLIMIT, "size error");
     let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
@@ -165,14 +165,14 @@ fn _put<'a>(
     pool.0.clone().send(Some(mail)).unwrap();
     hash.to_vec()
 }
-fn _get<'a>(
+fn _get(
     pool: &(
         Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
     tag: &'static [u8],
-    hash: &'a Vec<u8>,
+    hash: &Vec<u8>,
 ) -> Vec<u8> {
     assert!(hash.len() == 32, "invalid hash");
     let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
