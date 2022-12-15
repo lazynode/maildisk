@@ -95,7 +95,7 @@ fn _puts(
     );
 
     let mut data =
-        lazy::parallel_return(move || _puts(&(pool.0.clone(), pool.1.clone()), config, tag, l), move || _puts(pool, config, tag, r));
+        lazy::parallel_return(Box::new(move || _puts(&(pool.0.clone(), pool.1.clone()), config, tag, l)), Box::new( move || _puts(pool, config, tag, r)));
     data.push(this);
 
     _put(
@@ -126,7 +126,7 @@ fn _gets(
     );
 
     let mut data =
-        lazy::parallel_return(move || _gets(pool, config, tag, l), move || _gets(pool, config, tag, r));
+        lazy::parallel_return(Box::new(move || _gets(pool, config, tag, l)),Box::new( move || _gets(pool, config, tag, r)));
     data.insert(0, this);
 
     data.into_iter().flatten().collect::<Vec<_>>().to_owned()
@@ -215,7 +215,7 @@ mod tests {
     const C: conf::Type = conf::Type {
         address: "mail.7.day:993",
         username: "ms01@7.day",
-        password: "Ms01M$01",
+        password: "********",
         max_conn: 4,
     };
 
