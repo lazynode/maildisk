@@ -7,8 +7,8 @@ use native_tls::TlsStream;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::net::TcpStream;
-use std::sync::mpsc::{self, Receiver, SyncSender};
 use types::conf;
+use crossbeam_channel::{bounded, Sender, Receiver};
 
 extern crate imap;
 
@@ -43,13 +43,13 @@ fn createpool(
     config: &conf::Type,
 ) -> Result<
     (
-        SyncSender<Option<Session<TlsStream<TcpStream>>>>,
+        Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     Box<dyn Error>,
 > {
-    let (tx, rx): (SyncSender<_>, Receiver<_>) =
-        mpsc::sync_channel::<Option<Session<TlsStream<TcpStream>>>>(config.max_conn);
+    let (tx, rx): (Sender<_>, Receiver<_>) =
+    bounded::<Option<Session<TlsStream<TcpStream>>>>(config.max_conn);
     for _ in 0..config.max_conn {
         tx.send(None)?;
     }
@@ -76,7 +76,7 @@ fn pickmail(
 }
 fn _puts<'a>(
     pool: &(
-        SyncSender<Option<Session<TlsStream<TcpStream>>>>,
+        Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
@@ -95,7 +95,7 @@ fn _puts<'a>(
     );
 
     let mut data =
-        lazy::parallel_return(|| _puts(pool, config, tag, l), || _puts(pool, config, tag, r));
+        lazy::parallel_return(move || _puts(&(pool.0.clone(), pool.1.clone()), config, tag, l), move || _puts(pool, config, tag, r));
     data.push(this);
 
     _put(
@@ -108,7 +108,7 @@ fn _puts<'a>(
 
 fn _gets<'a>(
     pool: &(
-        SyncSender<Option<Session<TlsStream<TcpStream>>>>,
+        Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
@@ -126,14 +126,14 @@ fn _gets<'a>(
     );
 
     let mut data =
-        lazy::parallel_return(|| _gets(pool, config, tag, l), || _gets(pool, config, tag, r));
+        lazy::parallel_return(move || _gets(pool, config, tag, l), move || _gets(pool, config, tag, r));
     data.insert(0, this);
 
     data.into_iter().flatten().collect::<Vec<_>>().to_owned()
 }
 fn _put<'a>(
     pool: &(
-        SyncSender<Option<Session<TlsStream<TcpStream>>>>,
+        Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
@@ -167,7 +167,7 @@ fn _put<'a>(
 }
 fn _get<'a>(
     pool: &(
-        SyncSender<Option<Session<TlsStream<TcpStream>>>>,
+        Sender<Option<Session<TlsStream<TcpStream>>>>,
         Receiver<Option<Session<TlsStream<TcpStream>>>>,
     ),
     config: &conf::Type,
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn putget_largedata_testdata() {
-		let large_data = "test".repeat(HARDLIMIT/3);
+		let large_data = "test".repeat(HARDLIMIT/2);
         let hash = put(
             &C,
             &"/test".as_bytes().to_vec(),
