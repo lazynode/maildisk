@@ -1,7 +1,9 @@
 use std::thread;
 use std::sync::mpsc;
 
-pub fn parallel_return<'a, T>(f1: Box<dyn Fn() -> T + std::marker::Send + 'a>, f2: Box<dyn Fn() -> T + std::marker::Send + 'a>) -> Vec<T>
+type F<'a, T> = Box<dyn Fn() -> T + std::marker::Send + 'a>;
+
+pub fn parallel_return<'a, T>(f1: F<'a, T>, f2: F<'a, T>) -> Vec<T>
 where
     T: std::marker::Send + 'a,
 {
