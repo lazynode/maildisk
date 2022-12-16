@@ -2,34 +2,35 @@ mod lazy;
 mod types;
 
 use base64;
+use crossbeam_channel::{bounded, Receiver, Sender};
 use imap::Session;
 use native_tls::TlsStream;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::net::TcpStream;
 use types::conf;
-use crossbeam_channel::{bounded, Sender, Receiver};
 
-extern crate imap;
+type Bytes = Vec<u8>;
+type ErrPtr = Box<dyn Error>;
+type Mail = Session<TlsStream<TcpStream>>;
+type OptMailTx = Sender<Option<Mail>>;
+type OptMailRx = Receiver<Option<Mail>>;
+type OptMailTRx = (OptMailTx, OptMailRx);
 
-pub fn put(
-    config: &conf::Type,
-    path: &Vec<u8>,
-    data: &Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn put(config: &conf::Type, path: &Bytes, data: &Bytes) -> Result<Bytes, ErrPtr> {
     let pool = createpool(config)?;
     let hash = _puts(&pool, config, &TAGDATA, data).clone();
-	let mut hashpath = hash.clone();
+    let mut hashpath = hash.clone();
     hashpath.extend(path);
     let _ = _puts(&pool, config, &TAGATTR, &hashpath);
 
     Ok(hash)
 }
-pub fn get(config: &conf::Type, hash: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn get(config: &conf::Type, hash: &Bytes) -> Result<Bytes, ErrPtr> {
     let pool = createpool(config)?;
     Ok(_gets(&pool, config, &TAGDATA, hash))
 }
-pub fn init(config: &conf::Type) -> Result<(), Box<dyn Error>> {
+pub fn init(config: &conf::Type) -> Result<(), ErrPtr> {
     let domain_port: Vec<_> = config.address.split(':').collect();
     let client = imap::ClientBuilder::new(domain_port[0], domain_port[1].parse()?).native_tls()?;
     let mut session = match client.login(config.username, config.password) {
@@ -39,26 +40,14 @@ pub fn init(config: &conf::Type) -> Result<(), Box<dyn Error>> {
     session.create(MAILBOX)?;
     Ok(())
 }
-fn createpool(
-    config: &conf::Type,
-) -> Result<
-    (
-        Sender<Option<Session<TlsStream<TcpStream>>>>,
-        Receiver<Option<Session<TlsStream<TcpStream>>>>,
-    ),
-    Box<dyn Error>,
-> {
-    let (tx, rx): (Sender<_>, Receiver<_>) =
-    bounded::<Option<Session<TlsStream<TcpStream>>>>(config.max_conn);
+fn createpool(config: &conf::Type) -> Result<OptMailTRx, ErrPtr> {
+    let (tx, rx): (Sender<_>, Receiver<_>) = bounded::<Option<Mail>>(config.max_conn);
     for _ in 0..config.max_conn {
         tx.send(None)?;
     }
     Ok((tx, rx))
 }
-fn pickmail(
-    pool: &Receiver<Option<Session<TlsStream<TcpStream>>>>,
-    config: &conf::Type,
-) -> Result<Session<TlsStream<TcpStream>>, Box<dyn Error>> {
+fn pickmail(pool: &OptMailRx, config: &conf::Type) -> Result<Mail, ErrPtr> {
     match pool.recv_timeout(std::time::Duration::MAX)? {
         Some(m) => Ok(m),
         None => {
@@ -74,15 +63,7 @@ fn pickmail(
         }
     }
 }
-fn _puts(
-    pool: &(
-        Sender<Option<Session<TlsStream<TcpStream>>>>,
-        Receiver<Option<Session<TlsStream<TcpStream>>>>,
-    ),
-    config: &conf::Type,
-    tag: &'static [u8],
-    data: &Vec<u8>,
-) -> Vec<u8> {
+fn _puts(pool: &OptMailTRx, config: &conf::Type, tag: &[u8], data: &Bytes) -> Bytes {
     if data.len() < HARDLIMIT {
         return _put(pool, config, tag, data);
     }
@@ -94,8 +75,10 @@ fn _puts(
         &data[sy..].to_owned(),
     );
 
-    let mut data =
-        lazy::parallel_return(Box::new(move || _puts(&(pool.0.clone(), pool.1.clone()), config, tag, l)), Box::new( move || _puts(pool, config, tag, r)));
+    let mut data = lazy::parallel_return(
+        Box::new(move || _puts(&(pool.0.clone(), pool.1.clone()), config, tag, l)),
+        Box::new(move || _puts(pool, config, tag, r)),
+    );
     data.push(this);
 
     _put(
@@ -106,15 +89,7 @@ fn _puts(
     )
 }
 
-fn _gets(
-    pool: &(
-        Sender<Option<Session<TlsStream<TcpStream>>>>,
-        Receiver<Option<Session<TlsStream<TcpStream>>>>,
-    ),
-    config: &conf::Type,
-    tag: &'static [u8],
-    hash: &Vec<u8>,
-) -> Vec<u8> {
+fn _gets(pool: &OptMailTRx, config: &conf::Type, tag: &[u8], hash: &Bytes) -> Bytes {
     let data = _get(pool, config, tag, hash);
     if data.len() < HARDLIMIT {
         return data;
@@ -125,21 +100,15 @@ fn _gets(
         data[64..].to_owned(),
     );
 
-    let mut data =
-        lazy::parallel_return(Box::new(move || _gets(pool, config, tag, l)),Box::new( move || _gets(pool, config, tag, r)));
+    let mut data = lazy::parallel_return(
+        Box::new(move || _gets(pool, config, tag, l)),
+        Box::new(move || _gets(pool, config, tag, r)),
+    );
     data.insert(0, this);
 
     data.into_iter().flatten().collect::<Vec<_>>().to_owned()
 }
-fn _put(
-    pool: &(
-        Sender<Option<Session<TlsStream<TcpStream>>>>,
-        Receiver<Option<Session<TlsStream<TcpStream>>>>,
-    ),
-    config: &conf::Type,
-    tag: &'static [u8],
-    data: &Vec<u8>,
-) -> Vec<u8> {
+fn _put(pool: &OptMailTRx, config: &conf::Type, tag: &[u8], data: &Bytes) -> Bytes {
     assert!(data.len() <= HARDLIMIT, "size error");
     let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
     let mut hash = Sha256::new();
@@ -165,15 +134,7 @@ fn _put(
     pool.0.clone().send(Some(mail)).unwrap();
     hash.to_vec()
 }
-fn _get(
-    pool: &(
-        Sender<Option<Session<TlsStream<TcpStream>>>>,
-        Receiver<Option<Session<TlsStream<TcpStream>>>>,
-    ),
-    config: &conf::Type,
-    tag: &'static [u8],
-    hash: &Vec<u8>,
-) -> Vec<u8> {
+fn _get(pool: &OptMailTRx, config: &conf::Type, tag: &[u8], hash: &Bytes) -> Bytes {
     assert!(hash.len() == 32, "invalid hash");
     let mut mail = pickmail(&pool.1, config).expect("pickmail failed");
 
@@ -245,7 +206,7 @@ mod tests {
 
     #[test]
     fn putget_largedata_testdata() {
-		let large_data = "test".repeat(HARDLIMIT*10);
+        let large_data = "test".repeat(HARDLIMIT * 10);
         let hash = put(
             &C,
             &"/test".as_bytes().to_vec(),
@@ -253,7 +214,7 @@ mod tests {
         )
         .unwrap();
 
-		println!("{:#?}", hex::encode(&hash));
+        println!("{:#?}", hex::encode(&hash));
 
         let data = get(&C, &hash).unwrap();
         assert_eq!(data, large_data.as_bytes().to_vec());
