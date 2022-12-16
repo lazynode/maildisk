@@ -11,13 +11,13 @@ use std::net::TcpStream;
 use types::conf;
 
 type Bytes = Vec<u8>;
-type ErrPtr = Box<dyn Error>;
 type Mail = Session<TlsStream<TcpStream>>;
 type OptMailTx = Sender<Option<Mail>>;
 type OptMailRx = Receiver<Option<Mail>>;
 type OptMailTRx = (OptMailTx, OptMailRx);
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-pub fn put(config: &conf::Type, path: &Bytes, data: &Bytes) -> Result<Bytes, ErrPtr> {
+pub fn put(config: &conf::Type, path: &Bytes, data: &Bytes) -> Result<Bytes> {
     let pool = createpool(config)?;
     let hash = _puts(&pool, config, &TAGDATA, data).clone();
     let mut hashpath = hash.clone();
@@ -26,11 +26,11 @@ pub fn put(config: &conf::Type, path: &Bytes, data: &Bytes) -> Result<Bytes, Err
 
     Ok(hash)
 }
-pub fn get(config: &conf::Type, hash: &Bytes) -> Result<Bytes, ErrPtr> {
+pub fn get(config: &conf::Type, hash: &Bytes) -> Result<Bytes> {
     let pool = createpool(config)?;
     Ok(_gets(&pool, config, &TAGDATA, hash))
 }
-pub fn init(config: &conf::Type) -> Result<(), ErrPtr> {
+pub fn init(config: &conf::Type) -> Result<()> {
     let domain_port: Vec<_> = config.address.split(':').collect();
     let client = imap::ClientBuilder::new(domain_port[0], domain_port[1].parse()?).native_tls()?;
     let mut session = match client.login(config.username, config.password) {
@@ -40,14 +40,14 @@ pub fn init(config: &conf::Type) -> Result<(), ErrPtr> {
     session.create(MAILBOX)?;
     Ok(())
 }
-fn createpool(config: &conf::Type) -> Result<OptMailTRx, ErrPtr> {
+fn createpool(config: &conf::Type) -> Result<OptMailTRx> {
     let (tx, rx): (Sender<_>, Receiver<_>) = bounded::<Option<Mail>>(config.max_conn);
     for _ in 0..config.max_conn {
         tx.send(None)?;
     }
     Ok((tx, rx))
 }
-fn pickmail(pool: &OptMailRx, config: &conf::Type) -> Result<Mail, ErrPtr> {
+fn pickmail(pool: &OptMailRx, config: &conf::Type) -> Result<Mail> {
     match pool.recv_timeout(std::time::Duration::MAX)? {
         Some(m) => Ok(m),
         None => {
